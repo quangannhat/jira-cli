@@ -6,7 +6,7 @@ _HEADER_RE = re.compile(r"^(Summary|Assignee|Priority|Labels|Status):\s*(.*)$", 
 def _numbered_block(header: str, items: list[str]) -> str:
     block = f"# {header}\n"
     numbered = [f"{i}) {item}" for i, item in enumerate(items, start=1)]
-    per_line = 2 if len(numbered) > 20 else 1
+    per_line = 2 if len(numbered) > 10 else 1
     if per_line == 1:
         for entry in numbered:
             block += f"#   {entry}\n"
