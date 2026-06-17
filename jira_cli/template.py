@@ -19,7 +19,9 @@ def build_template(
 
     status_block = "# Status: leave blank to use the workflow's default starting status.\n"
     if statuses:
-        status_block += f"# Available statuses for this project: {', '.join(statuses)}\n"
+        status_block += "# Available statuses for this project:\n"
+        for status in statuses:
+            status_block += f"#   {status}\n"
 
     return f"""# New ticket in project: {project_key} - {project_name}
 # Lines starting with '#' are comments and are stripped before parsing.
