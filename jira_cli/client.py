@@ -148,7 +148,7 @@ class JiraClient:
     def search_issues(self, jql: str, max_results: int = 25) -> list[dict]:
         resp = self._request(
             "GET",
-            "/rest/api/3/search",
+            "/rest/api/3/search/jql",
             params={"jql": jql, "maxResults": max_results, "fields": "summary,status,assignee,issuetype"},
         )
         return resp.json()["issues"]
