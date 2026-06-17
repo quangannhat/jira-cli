@@ -140,6 +140,10 @@ def new():
     project = projs[choice - 1]
 
     try:
+        issue_types = client.list_issue_types(project["key"])
+    except JiraApiError:
+        issue_types = []
+    try:
         assignees = client.list_assignable_users(project["key"])
     except JiraApiError:
         assignees = []
@@ -163,7 +167,9 @@ def new():
     try:
         with open(path, "w") as f:
             f.write(
-                template.build_template(project["key"], project["name"], assignees, statuses, priorities, labels)
+                template.build_template(
+                    project["key"], project["name"], assignees, statuses, priorities, labels, issue_types
+                )
             )
 
         editor = shlex.split(os.environ.get("EDITOR", "nvim"))
@@ -176,6 +182,8 @@ def new():
 
     try:
         fields = template.parse_template(text)
+        if fields["type"]:
+            fields["type"] = template.resolve_choice(fields["type"], issue_types)
         if fields["assignee"]:
             fields["assignee"] = template.resolve_choice(fields["assignee"], assignee_options)
         if fields["priority"]:
@@ -189,6 +197,7 @@ def new():
     click.echo("\nReview ticket:")
     click.echo(f"  Project:     {project['key']}")
     click.echo(f"  Summary:     {fields['summary']}")
+    click.echo(f"  Type:        {fields['type'] or 'Task'}")
     click.echo(f"  Assignee:    {fields['assignee'] or '(none)'}")
     click.echo(f"  Priority:    {fields['priority'] or '(none)'}")
     click.echo(f"  Labels:      {', '.join(fields['labels']) or '(none)'}")
@@ -204,6 +213,7 @@ def new():
             project_key=project["key"],
             summary=fields["summary"],
             description=fields["description"] or None,
+            issue_type=fields["type"] or "Task",
             assignee=fields["assignee"] or None,
             priority=fields["priority"] or None,
             labels=fields["labels"] or None,

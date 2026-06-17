@@ -1,6 +1,6 @@
 import re
 
-_HEADER_RE = re.compile(r"^(Summary|Assignee|Priority|Labels|Status):\s*(.*)$", re.IGNORECASE)
+_HEADER_RE = re.compile(r"^(Summary|Type|Assignee|Priority|Labels|Status):\s*(.*)$", re.IGNORECASE)
 
 
 def _numbered_block(header: str, items: list[str]) -> str:
@@ -27,7 +27,12 @@ def build_template(
     statuses: list[str] | None = None,
     priorities: list[str] | None = None,
     labels: list[str] | None = None,
+    issue_types: list[str] | None = None,
 ) -> str:
+    type_block = "# Type: leave blank for the default work type (Task). Type a number from the list below, or free text.\n"
+    if issue_types:
+        type_block += _numbered_block("Available work types for this project:", issue_types)
+
     assignee_block = "# Assignee: leave blank for unassigned. Type a number from the list below, or free text.\n"
     if assignees:
         labels_for_assignees = [
@@ -53,6 +58,7 @@ def build_template(
 # Fill in the fields below, then save and quit.
 
 Summary:
+{type_block}Type:
 {assignee_block}Assignee:
 {priority_block}Priority:
 {labels_block}Labels:
@@ -75,7 +81,7 @@ def parse_template(text: str) -> dict:
             body_lines = lines[i + 1 :]
             break
 
-    fields = {"summary": "", "assignee": "", "priority": "", "status": "", "labels": []}
+    fields = {"summary": "", "type": "", "assignee": "", "priority": "", "status": "", "labels": []}
     for line in header_lines:
         match = _HEADER_RE.match(line.strip())
         if not match:

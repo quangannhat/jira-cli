@@ -115,6 +115,10 @@ class JiraClient:
         resp = self._request("GET", "/rest/api/3/priority")
         return [p["name"] for p in resp.json()]
 
+    def list_issue_types(self, project_key: str) -> list[str]:
+        resp = self._request("GET", f"/rest/api/3/project/{project_key}")
+        return [t["name"] for t in resp.json()["issueTypes"] if not t.get("subtask")]
+
     def list_labels(self) -> list[str]:
         labels = []
         start_at = 0
