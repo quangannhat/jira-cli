@@ -3,12 +3,20 @@ import re
 _HEADER_RE = re.compile(r"^(Summary|Assignee|Priority|Labels|Status):\s*(.*)$", re.IGNORECASE)
 
 
-def _numbered_block(header: str, items: list[str], per_line: int = 2) -> str:
+def _numbered_block(header: str, items: list[str]) -> str:
     block = f"# {header}\n"
     numbered = [f"{i}) {item}" for i, item in enumerate(items, start=1)]
+    per_line = 2 if len(numbered) > 20 else 1
+    if per_line == 1:
+        for entry in numbered:
+            block += f"#   {entry}\n"
+        return block
+
+    width = max(len(entry) for entry in numbered)
     for row_start in range(0, len(numbered), per_line):
         row = numbered[row_start : row_start + per_line]
-        block += f"#   {'   '.join(row)}\n"
+        padded = [entry.ljust(width) for entry in row[:-1]] + [row[-1]]
+        block += f"#   {'   '.join(padded)}\n"
     return block
 
 
