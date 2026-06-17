@@ -1,9 +1,14 @@
 import re
 
-_HEADER_RE = re.compile(r"^(Summary|Assignee|Priority|Labels):\s*(.*)$", re.IGNORECASE)
+_HEADER_RE = re.compile(r"^(Summary|Assignee|Priority|Labels|Status):\s*(.*)$", re.IGNORECASE)
 
 
-def build_template(project_key: str, project_name: str, assignees: list[dict] | None = None) -> str:
+def build_template(
+    project_key: str,
+    project_name: str,
+    assignees: list[dict] | None = None,
+    statuses: list[str] | None = None,
+) -> str:
     assignee_block = "# Assignee: leave blank for unassigned.\n"
     if assignees:
         assignee_block += "# Available assignees for this project:\n"
@@ -11,6 +16,10 @@ def build_template(project_key: str, project_name: str, assignees: list[dict] | 
             email = user.get("emailAddress")
             label = f"{user['displayName']} <{email}>" if email else user["displayName"]
             assignee_block += f"#   {label}\n"
+
+    status_block = "# Status: leave blank to use the workflow's default starting status.\n"
+    if statuses:
+        status_block += f"# Available statuses for this project: {', '.join(statuses)}\n"
 
     return f"""# New ticket in project: {project_key} - {project_name}
 # Lines starting with '#' are comments and are stripped before parsing.
@@ -20,6 +29,7 @@ Summary:
 {assignee_block}Assignee:
 Priority:
 Labels:
+{status_block}Status:
 
 # Write the description below this line. Multiple lines are fine.
 Description:
@@ -38,7 +48,7 @@ def parse_template(text: str) -> dict:
             body_lines = lines[i + 1 :]
             break
 
-    fields = {"summary": "", "assignee": "", "priority": "", "labels": []}
+    fields = {"summary": "", "assignee": "", "priority": "", "status": "", "labels": []}
     for line in header_lines:
         match = _HEADER_RE.match(line.strip())
         if not match:

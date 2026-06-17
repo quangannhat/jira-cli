@@ -143,12 +143,16 @@ def new():
         assignees = client.list_assignable_users(project["key"])
     except JiraApiError:
         assignees = []
+    try:
+        statuses = client.list_statuses(project["key"])
+    except JiraApiError:
+        statuses = []
 
     fd, path = tempfile.mkstemp(suffix=".jira.md")
     os.close(fd)
     try:
         with open(path, "w") as f:
-            f.write(template.build_template(project["key"], project["name"], assignees))
+            f.write(template.build_template(project["key"], project["name"], assignees, statuses))
 
         editor = shlex.split(os.environ.get("EDITOR", "nvim"))
         subprocess.call(editor + [path])
@@ -169,6 +173,7 @@ def new():
     click.echo(f"  Assignee:    {fields['assignee'] or '(none)'}")
     click.echo(f"  Priority:    {fields['priority'] or '(none)'}")
     click.echo(f"  Labels:      {', '.join(fields['labels']) or '(none)'}")
+    click.echo(f"  Status:      {fields['status'] or '(workflow default)'}")
     click.echo(f"  Description: {fields['description'] or '(none)'}")
 
     if not click.confirm("\nCreate this ticket?", default=True):
@@ -187,6 +192,12 @@ def new():
     except JiraApiError as e:
         raise click.ClickException(str(e))
     click.echo(f"Created {issue['key']}: {client.base_url}/browse/{issue['key']}")
+
+    if fields["status"]:
+        try:
+            client.transition_issue(issue["key"], fields["status"])
+        except JiraApiError as e:
+            click.echo(f"Warning: ticket created but could not transition to '{fields['status']}': {e}")
 
 
 if __name__ == "__main__":

@@ -106,6 +106,11 @@ class JiraClient:
         )
         return resp.json()
 
+    def list_statuses(self, project_key: str) -> list[str]:
+        resp = self._request("GET", f"/rest/api/3/project/{project_key}/statuses")
+        names = {status["name"] for issue_type in resp.json() for status in issue_type["statuses"]}
+        return sorted(names)
+
     def get_issue(self, issue_key: str) -> dict:
         resp = self._request("GET", f"/rest/api/3/issue/{issue_key}")
         return resp.json()
