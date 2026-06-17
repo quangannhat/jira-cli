@@ -229,5 +229,136 @@ def new():
             click.echo(f"Warning: ticket created but could not transition to '{fields['status']}': {e}")
 
 
+@main.command()
+def update():
+    """Interactively edit a ticket: pick a project and issue, edit a template, confirm."""
+    client = get_client()
+    try:
+        projs = sorted(client.list_projects(), key=lambda p: p["key"])
+    except JiraApiError as e:
+        raise click.ClickException(str(e))
+    if not projs:
+        click.echo("No projects found.")
+        return
+
+    for i, p in enumerate(projs, start=1):
+        click.echo(f"{i}) {p['key']:<10} {p['name']}")
+    choice = click.prompt("Select a project", type=click.IntRange(1, len(projs)))
+    project = projs[choice - 1]
+
+    try:
+        recent_issues = client.search_issues(f"project = {project['key']} ORDER BY updated DESC", max_results=25)
+    except JiraApiError as e:
+        raise click.ClickException(str(e))
+
+    for i, issue in enumerate(recent_issues, start=1):
+        f = issue["fields"]
+        click.echo(f"{i}) {issue['key']:<12} [{f['status']['name']:<12}] {f['summary'][:60]}")
+    selection = click.prompt("Select an issue number, or type an issue key directly")
+    if selection.isdigit() and 1 <= int(selection) <= len(recent_issues):
+        issue_key = recent_issues[int(selection) - 1]["key"]
+    else:
+        issue_key = selection
+
+    try:
+        issue = client.get_issue(issue_key)
+        issue_types = []  # not editable in this workflow
+        assignees = client.list_assignable_users(project["key"])
+    except JiraApiError as e:
+        raise click.ClickException(str(e))
+    try:
+        statuses = client.get_transitions(issue_key)
+    except JiraApiError:
+        statuses = []
+    try:
+        priorities = client.list_priorities()
+    except JiraApiError:
+        priorities = []
+    try:
+        labels = client.list_labels()
+    except JiraApiError:
+        labels = []
+
+    assignee_options = [u.get("emailAddress") or u["displayName"] for u in assignees]
+
+    current_fields = issue["fields"]
+    current_assignee = current_fields.get("assignee") or {}
+    current_priority = current_fields.get("priority") or {}
+    prefill = {
+        "summary": current_fields["summary"],
+        "assignee": current_assignee.get("emailAddress") or current_assignee.get("displayName", ""),
+        "priority": current_priority.get("name", ""),
+        "labels": ", ".join(current_fields.get("labels", [])),
+        "description": template.adf_to_text(current_fields.get("description")),
+    }
+
+    fd, path = tempfile.mkstemp(suffix=".jira.md")
+    os.close(fd)
+    try:
+        with open(path, "w") as f:
+            f.write(
+                template.build_template(
+                    project["key"],
+                    project["name"],
+                    assignees,
+                    statuses,
+                    priorities,
+                    labels,
+                    issue_types,
+                    prefill=prefill,
+                    issue_key=issue_key,
+                    current_status=current_fields["status"]["name"],
+                )
+            )
+
+        editor = shlex.split(os.environ.get("EDITOR", "nvim"))
+        subprocess.call(editor + [path])
+
+        with open(path) as f:
+            text = f.read()
+    finally:
+        os.remove(path)
+
+    try:
+        fields = template.parse_template(text)
+        if fields["assignee"]:
+            fields["assignee"] = template.resolve_choice(fields["assignee"], assignee_options)
+        if fields["priority"]:
+            fields["priority"] = template.resolve_choice(fields["priority"], priorities)
+        if fields["status"]:
+            fields["status"] = template.resolve_choice(fields["status"], statuses)
+        fields["labels"] = [template.resolve_choice(label, labels) for label in fields["labels"]]
+    except ValueError as e:
+        raise click.ClickException(str(e))
+
+    click.echo("\nReview changes:")
+    click.echo(f"  Issue:       {issue_key}")
+    click.echo(f"  Summary:     {fields['summary']}")
+    click.echo(f"  Assignee:    {fields['assignee'] or '(none)'}")
+    click.echo(f"  Priority:    {fields['priority'] or '(none)'}")
+    click.echo(f"  Labels:      {', '.join(fields['labels']) or '(none)'}")
+    click.echo(f"  Status:      {fields['status'] or '(unchanged)'}")
+    click.echo(f"  Description: {fields['description'] or '(none)'}")
+
+    if not click.confirm("\nApply these changes?", default=True):
+        click.echo("Aborted, ticket not updated.")
+        return
+
+    try:
+        client.edit_issue(
+            issue_key,
+            summary=fields["summary"],
+            description=fields["description"] or None,
+            assignee=fields["assignee"] or None,
+            priority=fields["priority"] or None,
+            labels=fields["labels"] or None,
+        )
+        if fields["status"]:
+            client.transition_issue(issue_key, fields["status"])
+    except JiraApiError as e:
+        raise click.ClickException(str(e))
+    click.echo(f"Updated {issue_key}: {client.base_url}/browse/{issue_key}")
+
+
 if __name__ == "__main__":
     main()

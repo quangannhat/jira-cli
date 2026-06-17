@@ -65,6 +65,8 @@ class JiraClient:
         description: str | None = None,
         assignee: str | None = None,
         status: str | None = None,
+        priority: str | None = None,
+        labels: list[str] | None = None,
     ) -> None:
         fields = {}
         if summary:
@@ -73,12 +75,20 @@ class JiraClient:
             fields["description"] = self._adf(description)
         if assignee:
             fields["assignee"] = {"accountId": self.find_account_id(assignee)}
+        if priority:
+            fields["priority"] = {"name": priority}
+        if labels:
+            fields["labels"] = labels
 
         if fields:
             self._request("PUT", f"/rest/api/3/issue/{issue_key}", json={"fields": fields})
 
         if status:
             self.transition_issue(issue_key, status)
+
+    def get_transitions(self, issue_key: str) -> list[str]:
+        resp = self._request("GET", f"/rest/api/3/issue/{issue_key}/transitions")
+        return [t["name"] for t in resp.json()["transitions"]]
 
     def transition_issue(self, issue_key: str, status_name: str) -> None:
         resp = self._request("GET", f"/rest/api/3/issue/{issue_key}/transitions")

@@ -28,10 +28,24 @@ def build_template(
     priorities: list[str] | None = None,
     labels: list[str] | None = None,
     issue_types: list[str] | None = None,
+    prefill: dict | None = None,
+    issue_key: str | None = None,
+    current_status: str | None = None,
 ) -> str:
-    type_block = "# Type: leave blank for the default work type (Task). Type a number from the list below, or free text.\n"
-    if issue_types:
-        type_block += _numbered_block("Available work types for this project:", issue_types)
+    prefill = prefill or {}
+
+    def field_line(name: str) -> str:
+        value = prefill.get(name.lower(), "")
+        return f"{name}: {value}" if value else f"{name}:"
+
+    type_section = ""
+    if issue_key is None:
+        type_block = (
+            "# Type: leave blank for the default work type (Task). Type a number from the list below, or free text.\n"
+        )
+        if issue_types:
+            type_block += _numbered_block("Available work types for this project:", issue_types)
+        type_section = f"{type_block}{field_line('Type')}\n"
 
     assignee_block = "# Assignee: leave blank for unassigned. Type a number from the list below, or free text.\n"
     if assignees:
@@ -46,27 +60,36 @@ def build_template(
         priority_block += _numbered_block("Available priorities:", priorities)
 
     status_block = "# Status: leave blank to use the workflow's default starting status. Type a number from the list below, or free text.\n"
+    if issue_key is not None:
+        status_block = "# Status: leave blank to keep the current status. Transition to one of the statuses below, or free text.\n"
+        if current_status:
+            status_block += f"# Current status: {current_status}\n"
     if statuses:
-        status_block += _numbered_block("Available statuses for this project:", statuses)
+        status_block += _numbered_block("Available statuses:", statuses)
 
     labels_block = "# Labels: comma-separated. Type numbers from the list below (e.g. 1,3), or free text.\n"
     if labels:
         labels_block += _numbered_block("Existing labels:", labels)
 
-    return f"""# New ticket in project: {project_key} - {project_name}
+    header = (
+        f"# Editing {issue_key} in project: {project_key} - {project_name}"
+        if issue_key is not None
+        else f"# New ticket in project: {project_key} - {project_name}"
+    )
+
+    return f"""{header}
 # Lines starting with '#' are comments and are stripped before parsing.
 # Fill in the fields below, then save and quit.
 
-Summary:
-{type_block}Type:
-{assignee_block}Assignee:
-{priority_block}Priority:
-{labels_block}Labels:
+{field_line('Summary')}
+{type_section}{assignee_block}{field_line('Assignee')}
+{priority_block}{field_line('Priority')}
+{labels_block}{field_line('Labels')}
 {status_block}Status:
 
 # Write the description below this line. Multiple lines are fine.
 Description:
-
+{prefill.get('description', '')}
 """
 
 
@@ -98,6 +121,20 @@ def parse_template(text: str) -> dict:
         raise ValueError("Summary is required")
 
     return fields
+
+
+def adf_to_text(adf: dict | None) -> str:
+    """Flatten Atlassian Document Format content into plain text, the inverse of JiraClient._adf."""
+    if not adf:
+        return ""
+
+    def text_of(node: dict) -> str:
+        if node.get("type") == "text":
+            return node.get("text", "")
+        return "".join(text_of(child) for child in node.get("content", []))
+
+    paragraphs = [text_of(node) for node in adf.get("content", [])]
+    return "\n".join(paragraphs).strip()
 
 
 def resolve_choice(value: str, options: list[str]) -> str:

@@ -36,7 +36,12 @@ uv run jira-cli new
 # Create a ticket directly with flags
 uv run jira-cli create -p PROJ -s "Fix login bug" -d "Steps to reproduce..." -t Bug -a you@company.com
 
-# Edit a ticket
+# Interactively edit a ticket: pick a project and issue, edit a template pre-filled with the
+# ticket's current Summary/Assignee/Priority/Labels/Description, review, and confirm. Status
+# options are limited to transitions actually reachable from the ticket's current status.
+uv run jira-cli update
+
+# Edit a ticket directly with flags
 uv run jira-cli edit PROJ-123 -s "New summary" --status "In Progress"
 
 # Show a ticket
