@@ -3,10 +3,12 @@ import re
 _HEADER_RE = re.compile(r"^(Summary|Assignee|Priority|Labels|Status):\s*(.*)$", re.IGNORECASE)
 
 
-def _numbered_block(header: str, items: list[str]) -> str:
+def _numbered_block(header: str, items: list[str], per_line: int = 2) -> str:
     block = f"# {header}\n"
-    for i, item in enumerate(items, start=1):
-        block += f"#   {i}) {item}\n"
+    numbered = [f"{i}) {item}" for i, item in enumerate(items, start=1)]
+    for row_start in range(0, len(numbered), per_line):
+        row = numbered[row_start : row_start + per_line]
+        block += f"#   {'   '.join(row)}\n"
     return block
 
 
