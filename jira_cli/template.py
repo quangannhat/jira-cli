@@ -3,13 +3,21 @@ import re
 _HEADER_RE = re.compile(r"^(Summary|Assignee|Priority|Labels):\s*(.*)$", re.IGNORECASE)
 
 
-def build_template(project_key: str, project_name: str) -> str:
+def build_template(project_key: str, project_name: str, assignees: list[dict] | None = None) -> str:
+    assignee_block = "# Assignee: leave blank for unassigned.\n"
+    if assignees:
+        assignee_block += "# Available assignees for this project:\n"
+        for user in assignees:
+            email = user.get("emailAddress")
+            label = f"{user['displayName']} <{email}>" if email else user["displayName"]
+            assignee_block += f"#   {label}\n"
+
     return f"""# New ticket in project: {project_key} - {project_name}
 # Lines starting with '#' are comments and are stripped before parsing.
 # Fill in the fields below, then save and quit.
 
 Summary:
-Assignee:
+{assignee_block}Assignee:
 Priority:
 Labels:
 

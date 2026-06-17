@@ -139,11 +139,16 @@ def new():
     choice = click.prompt("Select a project", type=click.IntRange(1, len(projs)))
     project = projs[choice - 1]
 
+    try:
+        assignees = client.list_assignable_users(project["key"])
+    except JiraApiError:
+        assignees = []
+
     fd, path = tempfile.mkstemp(suffix=".jira.md")
     os.close(fd)
     try:
         with open(path, "w") as f:
-            f.write(template.build_template(project["key"], project["name"]))
+            f.write(template.build_template(project["key"], project["name"], assignees))
 
         editor = shlex.split(os.environ.get("EDITOR", "nvim"))
         subprocess.call(editor + [path])

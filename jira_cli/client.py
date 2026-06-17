@@ -98,6 +98,14 @@ class JiraClient:
             raise JiraApiError(f"No Jira user found matching '{query}'")
         return users[0]["accountId"]
 
+    def list_assignable_users(self, project_key: str) -> list[dict]:
+        resp = self._request(
+            "GET",
+            "/rest/api/3/user/assignable/search",
+            params={"project": project_key, "maxResults": 50},
+        )
+        return resp.json()
+
     def get_issue(self, issue_key: str) -> dict:
         resp = self._request("GET", f"/rest/api/3/issue/{issue_key}")
         return resp.json()
