@@ -25,7 +25,15 @@ export JIRA_API_TOKEN=your-api-token
 ## Usage
 
 ```bash
-# Create a ticket
+# List projects you can access
+uv run jira-cli projects
+
+# Interactively create a ticket: pick a project, fill in a template in $EDITOR (default nvim),
+# review, and confirm. The template lists available work types, assignees, priorities, labels,
+# and statuses for the project, numbered so you can type an index instead of the full value.
+uv run jira-cli new
+
+# Create a ticket directly with flags
 uv run jira-cli create -p PROJ -s "Fix login bug" -d "Steps to reproduce..." -t Bug -a you@company.com
 
 # Edit a ticket
