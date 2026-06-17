@@ -1,5 +1,11 @@
+import os
+import shlex
+import subprocess
+import tempfile
+
 import click
 
+from jira_cli import template
 from jira_cli.client import JiraClient, JiraApiError
 from jira_cli.config import ConfigError, load_config, save_config
 
@@ -114,6 +120,68 @@ def projects():
         return
     for p in sorted(projs, key=lambda p: p["key"]):
         click.echo(f"{p['key']:<10} {p['name']}")
+
+
+@main.command()
+def new():
+    """Interactively create a ticket: pick a project, edit a template, confirm."""
+    client = get_client()
+    try:
+        projs = sorted(client.list_projects(), key=lambda p: p["key"])
+    except JiraApiError as e:
+        raise click.ClickException(str(e))
+    if not projs:
+        click.echo("No projects found.")
+        return
+
+    for i, p in enumerate(projs, start=1):
+        click.echo(f"{i}) {p['key']:<10} {p['name']}")
+    choice = click.prompt("Select a project", type=click.IntRange(1, len(projs)))
+    project = projs[choice - 1]
+
+    fd, path = tempfile.mkstemp(suffix=".jira.md")
+    os.close(fd)
+    try:
+        with open(path, "w") as f:
+            f.write(template.build_template(project["key"], project["name"]))
+
+        editor = shlex.split(os.environ.get("EDITOR", "nvim"))
+        subprocess.call(editor + [path])
+
+        with open(path) as f:
+            text = f.read()
+    finally:
+        os.remove(path)
+
+    try:
+        fields = template.parse_template(text)
+    except ValueError as e:
+        raise click.ClickException(str(e))
+
+    click.echo("\nReview ticket:")
+    click.echo(f"  Project:     {project['key']}")
+    click.echo(f"  Summary:     {fields['summary']}")
+    click.echo(f"  Assignee:    {fields['assignee'] or '(none)'}")
+    click.echo(f"  Priority:    {fields['priority'] or '(none)'}")
+    click.echo(f"  Labels:      {', '.join(fields['labels']) or '(none)'}")
+    click.echo(f"  Description: {fields['description'] or '(none)'}")
+
+    if not click.confirm("\nCreate this ticket?", default=True):
+        click.echo("Aborted, ticket not created.")
+        return
+
+    try:
+        issue = client.create_issue(
+            project_key=project["key"],
+            summary=fields["summary"],
+            description=fields["description"] or None,
+            assignee=fields["assignee"] or None,
+            priority=fields["priority"] or None,
+            labels=fields["labels"] or None,
+        )
+    except JiraApiError as e:
+        raise click.ClickException(str(e))
+    click.echo(f"Created {issue['key']}: {client.base_url}/browse/{issue['key']}")
 
 
 if __name__ == "__main__":

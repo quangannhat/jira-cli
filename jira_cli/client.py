@@ -38,6 +38,8 @@ class JiraClient:
         description: str | None = None,
         issue_type: str = "Task",
         assignee: str | None = None,
+        priority: str | None = None,
+        labels: list[str] | None = None,
     ) -> dict:
         fields = {
             "project": {"key": project_key},
@@ -48,6 +50,10 @@ class JiraClient:
             fields["description"] = self._adf(description)
         if assignee:
             fields["assignee"] = {"accountId": self.find_account_id(assignee)}
+        if priority:
+            fields["priority"] = {"name": priority}
+        if labels:
+            fields["labels"] = labels
 
         resp = self._request("POST", "/rest/api/3/issue", json={"fields": fields})
         return resp.json()
