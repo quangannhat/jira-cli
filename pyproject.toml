@@ -1,0 +1,19 @@
+[project]
+name = "jira-cli"
+version = "0.1.0"
+description = "CLI tool to create, edit, and search Jira tickets"
+requires-python = ">=3.9"
+dependencies = [
+    "click>=8.1",
+    "requests>=2.31",
+]
+
+[project.scripts]
+jira-cli = "jira_cli.cli:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["jira_cli"]
