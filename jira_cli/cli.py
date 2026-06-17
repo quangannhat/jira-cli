@@ -101,5 +101,20 @@ def search(jql, max_results):
         )
 
 
+@main.command()
+def projects():
+    """List all Jira projects you can access (key and name)."""
+    client = get_client()
+    try:
+        projs = client.list_projects()
+    except JiraApiError as e:
+        raise click.ClickException(str(e))
+    if not projs:
+        click.echo("No projects found.")
+        return
+    for p in sorted(projs, key=lambda p: p["key"]):
+        click.echo(f"{p['key']:<10} {p['name']}")
+
+
 if __name__ == "__main__":
     main()

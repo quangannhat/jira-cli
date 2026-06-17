@@ -103,3 +103,17 @@ class JiraClient:
             params={"jql": jql, "maxResults": max_results, "fields": "summary,status,assignee,issuetype"},
         )
         return resp.json()["issues"]
+
+    def list_projects(self) -> list[dict]:
+        projects = []
+        start_at = 0
+        while True:
+            resp = self._request(
+                "GET", "/rest/api/3/project/search", params={"startAt": start_at, "maxResults": 50}
+            )
+            page = resp.json()
+            projects.extend(page["values"])
+            if page.get("isLast", True):
+                break
+            start_at += len(page["values"])
+        return projects
