@@ -147,12 +147,24 @@ def new():
         statuses = client.list_statuses(project["key"])
     except JiraApiError:
         statuses = []
+    try:
+        priorities = client.list_priorities()
+    except JiraApiError:
+        priorities = []
+    try:
+        labels = client.list_labels()
+    except JiraApiError:
+        labels = []
+
+    assignee_options = [u.get("emailAddress") or u["displayName"] for u in assignees]
 
     fd, path = tempfile.mkstemp(suffix=".jira.md")
     os.close(fd)
     try:
         with open(path, "w") as f:
-            f.write(template.build_template(project["key"], project["name"], assignees, statuses))
+            f.write(
+                template.build_template(project["key"], project["name"], assignees, statuses, priorities, labels)
+            )
 
         editor = shlex.split(os.environ.get("EDITOR", "nvim"))
         subprocess.call(editor + [path])
@@ -164,6 +176,13 @@ def new():
 
     try:
         fields = template.parse_template(text)
+        if fields["assignee"]:
+            fields["assignee"] = template.resolve_choice(fields["assignee"], assignee_options)
+        if fields["priority"]:
+            fields["priority"] = template.resolve_choice(fields["priority"], priorities)
+        if fields["status"]:
+            fields["status"] = template.resolve_choice(fields["status"], statuses)
+        fields["labels"] = [template.resolve_choice(label, labels) for label in fields["labels"]]
     except ValueError as e:
         raise click.ClickException(str(e))
 

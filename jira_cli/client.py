@@ -111,6 +111,22 @@ class JiraClient:
         names = {status["name"] for issue_type in resp.json() for status in issue_type["statuses"]}
         return sorted(names)
 
+    def list_priorities(self) -> list[str]:
+        resp = self._request("GET", "/rest/api/3/priority")
+        return [p["name"] for p in resp.json()]
+
+    def list_labels(self) -> list[str]:
+        labels = []
+        start_at = 0
+        while True:
+            resp = self._request("GET", "/rest/api/3/label", params={"startAt": start_at, "maxResults": 200})
+            page = resp.json()
+            labels.extend(page["values"])
+            if page.get("isLast", True):
+                break
+            start_at += len(page["values"])
+        return labels
+
     def get_issue(self, issue_key: str) -> dict:
         resp = self._request("GET", f"/rest/api/3/issue/{issue_key}")
         return resp.json()
