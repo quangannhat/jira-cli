@@ -25,6 +25,11 @@ export JIRA_API_TOKEN=your-api-token
 ## Usage
 
 ```bash
+# Interactive menu: pick an action from a numbered list instead of remembering commands.
+# Running jira-cli with no arguments goes straight to this menu.
+uv run jira-cli
+uv run jira-cli menu
+
 # List projects you can access
 uv run jira-cli projects
 
@@ -48,8 +53,11 @@ uv run jira-cli edit PROJ-123 -s "New summary" --status "In Progress"
 # Show a ticket
 uv run jira-cli show PROJ-123
 
-# Search with JQL
-uv run jira-cli search 'project = PROJ AND status = "To Do"'
+# Search: pick a project, then fill in a filter template in $EDITOR (uncomment the
+# Type/Status/Assignee/Priority/Labels/Order-by options you want, or fill in Text/Max results)
+# instead of writing JQL by hand. Results open in another template with a copyable link per
+# ticket and an Actions field (e.g. "bulk-update" to change statuses for groups of tickets).
+uv run jira-cli search
 
 # Attach files to a ticket directly
 uv run jira-cli attach PROJ-123 ./screenshot.png ./log.txt

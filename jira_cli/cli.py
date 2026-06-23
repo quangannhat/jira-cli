@@ -1,4 +1,5 @@
 import os
+import re
 import shlex
 import subprocess
 import tempfile
@@ -25,9 +26,23 @@ def get_client() -> JiraClient:
     return JiraClient(cfg["base_url"], cfg["email"], cfg["api_token"])
 
 
-@click.group()
-def main():
+def _pick_files(cfg: dict) -> list[str]:
+    """Run the file picker, retrying on failure until it succeeds or the user gives up."""
+    while True:
+        try:
+            return picker_module.pick_files(cfg)
+        except Exception as e:
+            click.echo(f"File picker failed: {e}")
+            if not click.confirm("Try adding attachments again?", default=True):
+                return []
+
+
+@click.group(invoke_without_command=True)
+@click.pass_context
+def main(ctx):
     """CLI tool to create, edit, and search Jira tickets."""
+    if ctx.invoked_subcommand is None:
+        ctx.invoke(menu)
 
 
 @main.command()
@@ -92,12 +107,134 @@ def show(issue_key):
     click.echo(f"  URL:      {client.base_url}/browse/{issue['key']}")
 
 
+def _build_search_jql(cfg: dict, client: JiraClient, default_max_results: int) -> tuple[str, int] | None:
+    """Build a JQL query from a filter template, mirroring the `new`/`update` ticket templates."""
+    try:
+        projs = sorted(cache_module.cached_fetch(cfg, "projects", client.list_projects), key=lambda p: p["key"])
+    except JiraApiError as e:
+        raise click.ClickException(str(e))
+
+    project = None
+    if projs:
+        click.echo("0) Any project")
+        for i, p in enumerate(projs, start=1):
+            click.echo(f"{i}) {p['key']:<10} {p['name']}")
+        choice = click.prompt(
+            "Select a project to scope status/assignee options (0 for any)",
+            type=click.IntRange(0, len(projs)),
+            default=0,
+        )
+        if choice:
+            project = projs[choice - 1]
+
+    issue_types, statuses, assignees = [], [], []
+    if project:
+        try:
+            issue_types = cache_module.cached_fetch(
+                cfg, "issue_types", lambda: client.list_issue_types(project["key"]), project_key=project["key"]
+            )
+        except JiraApiError:
+            issue_types = []
+        try:
+            statuses = cache_module.cached_fetch(
+                cfg, "statuses", lambda: client.list_statuses(project["key"]), project_key=project["key"]
+            )
+        except JiraApiError:
+            statuses = []
+        try:
+            assignees = cache_module.cached_fetch(
+                cfg, "assignees", lambda: client.list_assignable_users(project["key"]), project_key=project["key"]
+            )
+        except JiraApiError:
+            assignees = []
+    try:
+        priorities = cache_module.cached_fetch(cfg, "priorities", client.list_priorities)
+    except JiraApiError:
+        priorities = []
+    try:
+        labels = cache_module.cached_fetch(cfg, "labels", client.list_labels)
+    except JiraApiError:
+        labels = []
+
+    fd, path = tempfile.mkstemp(suffix=".jira.md")
+    os.close(fd)
+    try:
+        with open(path, "w") as f:
+            f.write(
+                template.build_search_template(
+                    project["key"] if project else None,
+                    project["name"] if project else None,
+                    assignees=assignees,
+                    statuses=statuses,
+                    priorities=priorities,
+                    labels=labels,
+                    issue_types=issue_types,
+                    max_results=default_max_results,
+                )
+            )
+
+        editor = shlex.split(os.environ.get("EDITOR", "nvim"))
+        subprocess.call(editor + [path])
+
+        with open(path) as f:
+            text = f.read()
+    finally:
+        os.remove(path)
+
+    filters = template.parse_search_template(text)
+
+    def in_clause(field, values):
+        return f"{field} in (" + ", ".join(f'"{v}"' for v in values) + ")"
+
+    clauses = []
+    if project:
+        clauses.append(f"project = {project['key']}")
+    if filters["type"]:
+        clauses.append(in_clause("issuetype", filters["type"]))
+    if filters["statuses"]:
+        clauses.append(in_clause("status", filters["statuses"]))
+    if filters["assignee"]:
+        frags = []
+        for a in filters["assignee"]:
+            if a.strip().lower() == "unassigned":
+                frags.append("assignee is EMPTY")
+            else:
+                match = re.search(r"<(.+)>$", a)
+                frags.append(f'assignee = "{match.group(1) if match else a}"')
+        clauses.append("(" + " OR ".join(frags) + ")")
+    if filters["priority"]:
+        clauses.append(in_clause("priority", filters["priority"]))
+    if filters["labels"]:
+        clauses.append(in_clause("labels", filters["labels"]))
+    if filters["text"]:
+        clauses.append(f'text ~ "{filters["text"].replace(chr(34), chr(92) + chr(34))}"')
+
+    if not clauses:
+        click.echo("No filters specified.")
+        return None
+
+    order_by_jql = dict(template.SEARCH_ORDER_BY_OPTIONS).get(
+        filters["order_by"][0] if filters["order_by"] else None, "updated DESC"
+    )
+    jql = " AND ".join(clauses) + f" ORDER BY {order_by_jql}"
+    max_results = filters["max_results"] or default_max_results
+    click.echo(f"\nQuery: {jql}")
+    if not click.confirm("Run this search?", default=True):
+        return None
+    return jql, max_results
+
+
 @main.command()
-@click.argument("jql")
 @click.option("--max", "-m", "max_results", default=25, help="Max number of results")
-def search(jql, max_results):
-    """Search tickets using JQL, e.g. 'project = PROJ AND status = \"To Do\"'."""
+def search(max_results):
+    """Search tickets by building a filter interactively via a template."""
+    cfg = get_config()
     client = get_client()
+    result = _build_search_jql(cfg, client, max_results)
+    if result is None:
+        click.echo("Aborted, no search performed.")
+        return
+    jql, max_results = result
     try:
         issues = client.search_issues(jql, max_results)
     except JiraApiError as e:
@@ -105,13 +242,79 @@ def search(jql, max_results):
     if not issues:
         click.echo("No issues found.")
         return
-    for issue in issues:
-        fields = issue["fields"]
-        assignee = fields.get("assignee") or {}
-        click.echo(
-            f"{issue['key']:<12} [{fields['status']['name']:<12}] "
-            f"{fields['summary'][:60]:<60} ({assignee.get('displayName', 'Unassigned')})"
-        )
+
+    fd, path = tempfile.mkstemp(suffix=".jira.md")
+    os.close(fd)
+    try:
+        with open(path, "w") as f:
+            f.write(template.build_results_template(issues, client.base_url))
+
+        editor = shlex.split(os.environ.get("EDITOR", "nvim"))
+        subprocess.call(editor + [path])
+
+        with open(path) as f:
+            text = f.read()
+    finally:
+        os.remove(path)
+
+    action = template.parse_results_template(text)
+    if action is None:
+        return
+
+    if action.lower() == "bulk-update":
+        project_keys = sorted({issue["key"].split("-")[0] for issue in issues})
+        available_statuses = set()
+        for pk in project_keys:
+            try:
+                available_statuses.update(
+                    cache_module.cached_fetch(cfg, "statuses", lambda pk=pk: client.list_statuses(pk), project_key=pk)
+                )
+            except JiraApiError:
+                pass
+
+        fd, path = tempfile.mkstemp(suffix=".jira.md")
+        os.close(fd)
+        try:
+            with open(path, "w") as f:
+                f.write(template.build_bulk_update_template(issues, sorted(available_statuses)))
+            editor = shlex.split(os.environ.get("EDITOR", "nvim"))
+            subprocess.call(editor + [path])
+            with open(path) as f:
+                bulk_text = f.read()
+        finally:
+            os.remove(path)
+
+        original_status = {issue["key"]: issue["fields"]["status"]["name"] for issue in issues}
+        positions = template.parse_bulk_update_template(bulk_text)
+        changes = {
+            key: (original_status[key], new_status)
+            for key, new_status in positions.items()
+            if key in original_status and new_status != original_status[key]
+        }
+        if not changes:
+            click.echo("No status changes, nothing to update.")
+            return
+
+        click.echo("\nAbout to change:")
+        for key, (old_status, new_status) in changes.items():
+            click.echo(f"  {key}: {old_status} -> {new_status}")
+        if not click.confirm(f"\nApply these {len(changes)} status change(s)?", default=False):
+            click.echo("Aborted, no changes applied.")
+            return
+
+        succeeded, failed = 0, 0
+        for key, (old_status, new_status) in changes.items():
+            try:
+                client.edit_issue(key, status=new_status)
+            except JiraApiError as e:
+                click.echo(f"{key}: failed — {e}")
+                failed += 1
+            else:
+                click.echo(f"{key}: updated")
+                succeeded += 1
+        click.echo(f"\nDone: {succeeded} succeeded, {failed} failed.")
+    else:
+        click.echo(f"Unknown action '{action}', nothing was done.")
 
 
 @main.command()
@@ -163,10 +366,13 @@ def attach(issue_key, files):
     cfg = get_config()
     client = JiraClient(cfg["base_url"], cfg["email"], cfg["api_token"])
 
-    paths = list(files) if files else picker_module.pick_files(cfg)
+    paths = list(files) if files else _pick_files(cfg)
     missing = [p for p in paths if not Path(p).exists()]
     if missing:
         raise click.ClickException(f"File(s) not found: {', '.join(missing)}")
+    not_files = [p for p in paths if not Path(p).is_file()]
+    if not_files:
+        raise click.ClickException(f"Not a file: {', '.join(not_files)}")
     if not paths:
         click.echo("No files to attach.")
         return
@@ -322,11 +528,17 @@ def new():
             click.echo(f"Warning: ticket created but could not transition to '{fields['status']}': {e}")
 
     if click.confirm("\nAdd attachments?", default=False):
-        paths = picker_module.pick_files(cfg)
-        missing = [p for p in paths if not Path(p).exists()]
-        for p in missing:
-            click.echo(f"Skipping (not found): {p}")
-        paths = [p for p in paths if p not in missing]
+        paths = []
+        while True:
+            picked = _pick_files(cfg)
+            not_files = [p for p in picked if not Path(p).is_file()]
+            if not_files:
+                click.echo(f"Not a file: {', '.join(not_files)}")
+                if click.confirm("Try adding attachments again?", default=True):
+                    continue
+                break
+            paths = picked
+            break
         if paths:
             try:
                 attachments = client.add_attachment(issue["key"], paths)
@@ -493,6 +705,77 @@ def update():
     except JiraApiError as e:
         raise click.ClickException(str(e))
     click.echo(f"Updated {issue_key}: {client.base_url}/browse/{issue_key}")
+
+
+def _menu_show(ctx):
+    issue_key = click.prompt("Issue key")
+    ctx.invoke(show, issue_key=issue_key)
+
+
+def _menu_search(ctx):
+    ctx.invoke(search)
+
+
+def _menu_attach(ctx):
+    issue_key = click.prompt("Issue key")
+    raw = click.prompt("File path(s), comma-separated, or leave blank to use the file picker", default="", show_default=False)
+    files = tuple(p.strip() for p in raw.split(",") if p.strip())
+    ctx.invoke(attach, issue_key=issue_key, files=files)
+
+
+def _menu_set_file_picker(ctx):
+    command_template = click.prompt(
+        "File picker command (use {output} as a placeholder), blank to clear", default="", show_default=False
+    )
+    ctx.invoke(config_set_file_picker, command_template=command_template or None)
+
+
+def _menu_cache(ctx):
+    while True:
+        click.echo("\n1) Configure cache TTLs\n2) Clear cache\n3) Back")
+        choice = click.prompt("Select", type=click.IntRange(1, 3))
+        if choice == 1:
+            ctx.invoke(cache_configure)
+        elif choice == 2:
+            project = click.prompt("Project key to clear (blank for all)", default="", show_default=False)
+            ctx.invoke(cache_clear, project=project or None)
+        else:
+            return
+
+
+@main.command()
+@click.pass_context
+def menu(ctx):
+    """Interactive menu: pick an action instead of remembering commands."""
+    actions = [
+        ("New ticket", lambda: ctx.invoke(new)),
+        ("Update ticket", lambda: ctx.invoke(update)),
+        ("Show ticket", lambda: _menu_show(ctx)),
+        ("Search tickets", lambda: _menu_search(ctx)),
+        ("Attach files to a ticket", lambda: _menu_attach(ctx)),
+        ("List projects", lambda: ctx.invoke(projects)),
+        ("Configure Jira credentials", lambda: ctx.invoke(configure)),
+        ("Set file picker", lambda: _menu_set_file_picker(ctx)),
+        ("Cache settings", lambda: _menu_cache(ctx)),
+        ("Exit", None),
+    ]
+
+    while True:
+        click.echo("\n=== jira-cli ===")
+        for i, (label, _) in enumerate(actions, start=1):
+            click.echo(f"{i}) {label}")
+        choice = click.prompt("Select an action", type=click.IntRange(1, len(actions)), default=len(actions))
+        label, action = actions[choice - 1]
+        if action is None:
+            return
+        try:
+            action()
+        except click.ClickException as e:
+            click.echo(f"Error: {e.format_message()}")
+        except JiraApiError as e:
+            click.echo(f"Error: {e}")
+        except click.Abort:
+            click.echo("Cancelled.")
 
 
 if __name__ == "__main__":
