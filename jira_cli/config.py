@@ -52,3 +52,16 @@ def save_cache_ttl(ttl: dict) -> None:
     config = load_raw_config()
     config["cache_ttl"] = ttl
     _write_config(config)
+
+
+def save_file_picker(command_template: str, start_dir: str = "") -> None:
+    """Save the shell command (and starting directory) used to pick files for attachments,
+    or clear both if command_template is empty."""
+    config = load_raw_config()
+    if command_template:
+        config["file_picker_cmd"] = command_template
+        config["file_picker_start_dir"] = start_dir or "~"
+    else:
+        config.pop("file_picker_cmd", None)
+        config.pop("file_picker_start_dir", None)
+    _write_config(config)

@@ -31,6 +31,7 @@ uv run jira-cli projects
 # Interactively create a ticket: pick a project, fill in a template in $EDITOR (default nvim),
 # review, and confirm. The template lists available work types, assignees, priorities, labels,
 # and statuses for the project, numbered so you can type an index instead of the full value.
+# After creation, you're asked whether to add attachments (see Attachments below).
 uv run jira-cli new
 
 # Create a ticket directly with flags
@@ -49,7 +50,37 @@ uv run jira-cli show PROJ-123
 
 # Search with JQL
 uv run jira-cli search 'project = PROJ AND status = "To Do"'
+
+# Attach files to a ticket directly
+uv run jira-cli attach PROJ-123 ./screenshot.png ./log.txt
+
+# Attach files via a configured file picker
+uv run jira-cli attach PROJ-123
 ```
+
+## Attachments
+
+`attach` takes file paths directly, or with no paths it launches a file picker to choose
+them interactively. The picker isn't tied to any particular tool — configure the shell
+command you want via `{output}`, a placeholder for a file the picker should write the
+selected paths to, one per line:
+
+```bash
+# yazi's --chooser-file writes the chosen path(s) to a file. You'll be prompted for the
+# directory the picker should start in (defaults to ~).
+uv run jira-cli config set-file-picker "yazi --chooser-file={output}"
+
+# clear it to fall back to typing paths manually
+uv run jira-cli config set-file-picker
+```
+
+If no picker is configured, or the configured command isn't found on `PATH`, `attach`
+falls back to prompting for comma-separated file paths.
+
+After attaching files during `new`, you're asked whether to update the description to
+mention them. If yes, the description reopens in `$EDITOR` with a numbered `{{n}}` token
+per attachment listed in the comments — move a token to wherever in the text you want
+that attachment mentioned, save and quit, and it's replaced with `[Attached: filename]`.
 
 ## Caching
 

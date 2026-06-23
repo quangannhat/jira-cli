@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import requests
 
 
@@ -142,6 +144,20 @@ class JiraClient:
                 break
             start_at += len(page["values"])
         return labels
+
+    def add_attachment(self, issue_key: str, file_paths: list[str]) -> list[dict]:
+        files = [("file", (Path(p).name, open(p, "rb"))) for p in file_paths]
+        try:
+            resp = self._request(
+                "POST",
+                f"/rest/api/3/issue/{issue_key}/attachments",
+                files=files,
+                headers={"X-Atlassian-Token": "no-check", "Content-Type": None},
+            )
+        finally:
+            for _, (_, fh) in files:
+                fh.close()
+        return resp.json()
 
     def get_issue(self, issue_key: str) -> dict:
         resp = self._request("GET", f"/rest/api/3/issue/{issue_key}")

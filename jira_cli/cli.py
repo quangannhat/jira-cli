@@ -2,13 +2,15 @@ import os
 import shlex
 import subprocess
 import tempfile
+from pathlib import Path
 
 import click
 
 from jira_cli import cache as cache_module
+from jira_cli import picker as picker_module
 from jira_cli import template
 from jira_cli.client import JiraClient, JiraApiError
-from jira_cli.config import ConfigError, load_config, load_raw_config, save_cache_ttl, save_config
+from jira_cli.config import ConfigError, load_config, load_raw_config, save_cache_ttl, save_config, save_file_picker
 
 
 def get_config() -> dict:
@@ -126,6 +128,54 @@ def projects():
         return
     for p in sorted(projs, key=lambda p: p["key"]):
         click.echo(f"{p['key']:<10} {p['name']}")
+
+
+@main.group()
+def config():
+    """Manage jira-cli configuration."""
+
+
+@config.command("set-file-picker")
+@click.argument("command_template", required=False)
+def config_set_file_picker(command_template):
+    """Set the shell command used to pick files for `attach`.
+
+    Use {output} as a placeholder for a file the picker should write selected paths to,
+    one per line, e.g. yazi --chooser-file={output}. Omit the argument to clear the
+    setting and fall back to typing paths manually.
+    """
+    start_dir = ""
+    if command_template:
+        start_dir = click.prompt("Directory to start the picker in", default="~")
+    save_file_picker(command_template or "", start_dir)
+    if command_template:
+        click.echo(f"File picker set to: {command_template} (starting in {start_dir})")
+    else:
+        click.echo("File picker cleared; `attach` will prompt for paths manually.")
+
+
+@main.command()
+@click.argument("issue_key")
+@click.argument("files", nargs=-1, type=click.Path(exists=True))
+def attach(issue_key, files):
+    """Attach files to a ticket. Pass file paths directly, or omit them to use the
+    configured file picker (see `jira-cli config set-file-picker`)."""
+    cfg = get_config()
+    client = JiraClient(cfg["base_url"], cfg["email"], cfg["api_token"])
+
+    paths = list(files) if files else picker_module.pick_files(cfg)
+    missing = [p for p in paths if not Path(p).exists()]
+    if missing:
+        raise click.ClickException(f"File(s) not found: {', '.join(missing)}")
+    if not paths:
+        click.echo("No files to attach.")
+        return
+
+    try:
+        client.add_attachment(issue_key, paths)
+    except JiraApiError as e:
+        raise click.ClickException(str(e))
+    click.echo(f"Attached {len(paths)} file(s) to {issue_key}: {client.base_url}/browse/{issue_key}")
 
 
 @main.group()
@@ -270,6 +320,44 @@ def new():
             client.transition_issue(issue["key"], fields["status"])
         except JiraApiError as e:
             click.echo(f"Warning: ticket created but could not transition to '{fields['status']}': {e}")
+
+    if click.confirm("\nAdd attachments?", default=False):
+        paths = picker_module.pick_files(cfg)
+        missing = [p for p in paths if not Path(p).exists()]
+        for p in missing:
+            click.echo(f"Skipping (not found): {p}")
+        paths = [p for p in paths if p not in missing]
+        if paths:
+            try:
+                attachments = client.add_attachment(issue["key"], paths)
+            except JiraApiError as e:
+                click.echo(f"Warning: could not attach files: {e}")
+                attachments = []
+            else:
+                click.echo(f"Attached {len(attachments)} file(s) to {issue['key']}")
+
+            if attachments and click.confirm("\nUpdate description to position these attachments?", default=False):
+                fd, path = tempfile.mkstemp(suffix=".jira.md")
+                os.close(fd)
+                try:
+                    with open(path, "w") as f:
+                        f.write(template.build_attachment_placement_template(fields["description"], attachments))
+
+                    editor = shlex.split(os.environ.get("EDITOR", "nvim"))
+                    subprocess.call(editor + [path])
+
+                    with open(path) as f:
+                        text = f.read()
+                finally:
+                    os.remove(path)
+
+                new_description = template.resolve_attachment_placements(text, attachments)
+                try:
+                    client.edit_issue(issue["key"], description=new_description)
+                except JiraApiError as e:
+                    click.echo(f"Warning: could not update description: {e}")
+                else:
+                    click.echo("Description updated.")
 
 
 @main.command()

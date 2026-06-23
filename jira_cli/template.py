@@ -137,6 +137,31 @@ def adf_to_text(adf: dict | None) -> str:
     return "\n".join(paragraphs).strip()
 
 
+def build_attachment_placement_template(description: str, attachments: list[dict]) -> str:
+    """Template for repositioning attachment references within a description.
+
+    Each attachment gets a numbered {{n}} token; the user moves the token to wherever
+    in the text they want that attachment mentioned, then `resolve_attachment_placements`
+    turns it into a plain-text reference.
+    """
+    token_lines = "\n".join(f"#   {{{{{i}}}}} -> {a['filename']}" for i, a in enumerate(attachments, start=1))
+    return f"""# Position attachments in the description below by inserting their token wherever
+# you want them mentioned. Available attachment tokens:
+{token_lines}
+# Lines starting with '#' are comments and are stripped before parsing.
+# Save and quit when done.
+
+{description}
+"""
+
+
+def resolve_attachment_placements(text: str, attachments: list[dict]) -> str:
+    body = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#")).strip()
+    for i, attachment in enumerate(attachments, start=1):
+        body = body.replace(f"{{{{{i}}}}}", f"[Attached: {attachment['filename']}]")
+    return body
+
+
 def resolve_choice(value: str, options: list[str]) -> str:
     """Resolve a field value that may be a 1-based index into `options`, or pass through free text."""
     if value.isdigit():
