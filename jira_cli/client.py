@@ -114,7 +114,9 @@ class JiraClient:
             "/rest/api/3/user/assignable/search",
             params={"project": project_key, "maxResults": 50},
         )
-        return resp.json()
+        return [
+            {"displayName": u["displayName"], "emailAddress": u.get("emailAddress")} for u in resp.json()
+        ]
 
     def list_statuses(self, project_key: str) -> list[str]:
         resp = self._request("GET", f"/rest/api/3/project/{project_key}/statuses")
@@ -161,7 +163,7 @@ class JiraClient:
                 "GET", "/rest/api/3/project/search", params={"startAt": start_at, "maxResults": 50}
             )
             page = resp.json()
-            projects.extend(page["values"])
+            projects.extend({"key": p["key"], "name": p["name"]} for p in page["values"])
             if page.get("isLast", True):
                 break
             start_at += len(page["values"])

@@ -5,16 +5,21 @@ import tempfile
 
 import click
 
+from jira_cli import cache as cache_module
 from jira_cli import template
 from jira_cli.client import JiraClient, JiraApiError
-from jira_cli.config import ConfigError, load_config, save_config
+from jira_cli.config import ConfigError, load_config, load_raw_config, save_cache_ttl, save_config
+
+
+def get_config() -> dict:
+    try:
+        return load_config()
+    except ConfigError as e:
+        raise click.ClickException(str(e))
 
 
 def get_client() -> JiraClient:
-    try:
-        cfg = load_config()
-    except ConfigError as e:
-        raise click.ClickException(str(e))
+    cfg = get_config()
     return JiraClient(cfg["base_url"], cfg["email"], cfg["api_token"])
 
 
@@ -110,9 +115,10 @@ def search(jql, max_results):
 @main.command()
 def projects():
     """List all Jira projects you can access (key and name)."""
-    client = get_client()
+    cfg = get_config()
+    client = JiraClient(cfg["base_url"], cfg["email"], cfg["api_token"])
     try:
-        projs = client.list_projects()
+        projs = cache_module.cached_fetch(cfg, "projects", client.list_projects)
     except JiraApiError as e:
         raise click.ClickException(str(e))
     if not projs:
@@ -122,12 +128,43 @@ def projects():
         click.echo(f"{p['key']:<10} {p['name']}")
 
 
+@main.group()
+def cache():
+    """Manage the on-disk cache of project metadata (projects, issue types, assignees, statuses, priorities, labels)."""
+
+
+@cache.command("configure")
+def cache_configure():
+    """Set per-category cache TTLs, in seconds."""
+    current = load_raw_config().get("cache_ttl", {})
+    ttl = {}
+    for category in cache_module.ALL_CATEGORIES:
+        ttl[category] = click.prompt(
+            f"TTL for {category} (seconds)", default=current.get(category, cache_module.DEFAULT_TTL), type=int
+        )
+    save_cache_ttl(ttl)
+    click.echo("Cache TTL settings saved.")
+
+
+@cache.command("clear")
+@click.argument("project", required=False)
+def cache_clear(project):
+    """Clear cached metadata. Pass a project key to clear just that project's cache, or omit to clear everything."""
+    removed = cache_module.clear(project)
+    if not removed:
+        click.echo("Nothing to clear.")
+        return
+    for path in removed:
+        click.echo(f"Removed {path}")
+
+
 @main.command()
 def new():
     """Interactively create a ticket: pick a project, edit a template, confirm."""
-    client = get_client()
+    cfg = get_config()
+    client = JiraClient(cfg["base_url"], cfg["email"], cfg["api_token"])
     try:
-        projs = sorted(client.list_projects(), key=lambda p: p["key"])
+        projs = sorted(cache_module.cached_fetch(cfg, "projects", client.list_projects), key=lambda p: p["key"])
     except JiraApiError as e:
         raise click.ClickException(str(e))
     if not projs:
@@ -140,23 +177,29 @@ def new():
     project = projs[choice - 1]
 
     try:
-        issue_types = client.list_issue_types(project["key"])
+        issue_types = cache_module.cached_fetch(
+            cfg, "issue_types", lambda: client.list_issue_types(project["key"]), project_key=project["key"]
+        )
     except JiraApiError:
         issue_types = []
     try:
-        assignees = client.list_assignable_users(project["key"])
+        assignees = cache_module.cached_fetch(
+            cfg, "assignees", lambda: client.list_assignable_users(project["key"]), project_key=project["key"]
+        )
     except JiraApiError:
         assignees = []
     try:
-        statuses = client.list_statuses(project["key"])
+        statuses = cache_module.cached_fetch(
+            cfg, "statuses", lambda: client.list_statuses(project["key"]), project_key=project["key"]
+        )
     except JiraApiError:
         statuses = []
     try:
-        priorities = client.list_priorities()
+        priorities = cache_module.cached_fetch(cfg, "priorities", client.list_priorities)
     except JiraApiError:
         priorities = []
     try:
-        labels = client.list_labels()
+        labels = cache_module.cached_fetch(cfg, "labels", client.list_labels)
     except JiraApiError:
         labels = []
 
@@ -232,9 +275,10 @@ def new():
 @main.command()
 def update():
     """Interactively edit a ticket: pick a project and issue, edit a template, confirm."""
-    client = get_client()
+    cfg = get_config()
+    client = JiraClient(cfg["base_url"], cfg["email"], cfg["api_token"])
     try:
-        projs = sorted(client.list_projects(), key=lambda p: p["key"])
+        projs = sorted(cache_module.cached_fetch(cfg, "projects", client.list_projects), key=lambda p: p["key"])
     except JiraApiError as e:
         raise click.ClickException(str(e))
     if not projs:
@@ -263,19 +307,22 @@ def update():
     try:
         issue = client.get_issue(issue_key)
         issue_types = []  # not editable in this workflow
-        assignees = client.list_assignable_users(project["key"])
+        assignees = cache_module.cached_fetch(
+            cfg, "assignees", lambda: client.list_assignable_users(project["key"]), project_key=project["key"]
+        )
     except JiraApiError as e:
         raise click.ClickException(str(e))
     try:
+        # Transitions depend on the issue's current status, so they aren't cached.
         statuses = client.get_transitions(issue_key)
     except JiraApiError:
         statuses = []
     try:
-        priorities = client.list_priorities()
+        priorities = cache_module.cached_fetch(cfg, "priorities", client.list_priorities)
     except JiraApiError:
         priorities = []
     try:
-        labels = client.list_labels()
+        labels = cache_module.cached_fetch(cfg, "labels", client.list_labels)
     except JiraApiError:
         labels = []
 

@@ -50,3 +50,18 @@ uv run jira-cli show PROJ-123
 # Search with JQL
 uv run jira-cli search 'project = PROJ AND status = "To Do"'
 ```
+
+## Caching
+
+`projects`, `new`, and `update` cache metadata (projects, issue types, assignees, statuses,
+priorities, labels) under `~/.config/jira-cli/cache/` so they don't re-fetch it from the API
+every run. Each category defaults to a 1 hour TTL.
+
+```bash
+# Customize the TTL (in seconds) per category
+uv run jira-cli cache configure
+
+# Clear all cached metadata, or just one project's
+uv run jira-cli cache clear
+uv run jira-cli cache clear PROJ
+```

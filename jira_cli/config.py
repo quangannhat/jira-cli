@@ -29,9 +29,26 @@ def load_config() -> dict:
     return config
 
 
-def save_config(base_url: str, email: str, api_token: str) -> None:
+def load_raw_config() -> dict:
+    """Read config.json as-is, without env overlay or required-field checks."""
+    if CONFIG_FILE.exists():
+        return json.loads(CONFIG_FILE.read_text())
+    return {}
+
+
+def _write_config(config: dict) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    CONFIG_FILE.write_text(
-        json.dumps({"base_url": base_url.rstrip("/"), "email": email, "api_token": api_token}, indent=2)
-    )
+    CONFIG_FILE.write_text(json.dumps(config, indent=2))
     CONFIG_FILE.chmod(0o600)
+
+
+def save_config(base_url: str, email: str, api_token: str) -> None:
+    config = load_raw_config()
+    config.update({"base_url": base_url.rstrip("/"), "email": email, "api_token": api_token})
+    _write_config(config)
+
+
+def save_cache_ttl(ttl: dict) -> None:
+    config = load_raw_config()
+    config["cache_ttl"] = ttl
+    _write_config(config)
