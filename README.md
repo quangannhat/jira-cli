@@ -59,6 +59,10 @@ uv run jira-cli show PROJ-123
 # ticket and an Actions field (e.g. "bulk-update" to change statuses for groups of tickets).
 uv run jira-cli search
 
+# Search non-interactively with raw JQL (for scripts/agents) instead of the editor template.
+# Add --json for machine-readable output: an array of {key, summary, status, assignee, priority, url}.
+uv run jira-cli search --jql 'project = PROJ AND status = "In Progress"' --json
+
 # Attach files to a ticket directly
 uv run jira-cli attach PROJ-123 ./screenshot.png ./log.txt
 

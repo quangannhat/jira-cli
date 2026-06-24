@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import shlex
@@ -239,12 +240,48 @@ def _show_results_template(issues: list[dict], client: JiraClient, editor: list[
     return template.parse_results_template(text)
 
 
+def _issue_summary(issue: dict, base_url: str) -> dict:
+    fields = issue["fields"]
+    assignee = fields.get("assignee") or {}
+    priority = fields.get("priority") or {}
+    return {
+        "key": issue["key"],
+        "summary": fields["summary"],
+        "status": fields["status"]["name"],
+        "assignee": assignee.get("displayName"),
+        "priority": priority.get("name"),
+        "url": f"{base_url}/browse/{issue['key']}",
+    }
+
+
 @main.command()
 @click.option("--max", "-m", "max_results", default=25, help="Max number of results")
-def search(max_results):
-    """Search tickets by building a filter interactively via a template."""
+@click.option("--jql", default=None, help="Run this JQL directly, skipping the interactive filter template")
+@click.option("--json", "as_json", is_flag=True, help="Print results as JSON (requires --jql)")
+def search(max_results, jql, as_json):
+    """Search tickets by building a filter interactively via a template, or directly with --jql."""
+    if as_json and not jql:
+        raise click.ClickException("--json requires --jql")
+
     cfg = get_config()
     client = get_client()
+
+    if jql:
+        try:
+            issues = client.search_issues(jql, max_results)
+        except JiraApiError as e:
+            raise click.ClickException(str(e))
+        if as_json:
+            click.echo(json.dumps([_issue_summary(issue, client.base_url) for issue in issues]))
+        elif not issues:
+            click.echo("No issues found.")
+        else:
+            for issue in issues:
+                summary = _issue_summary(issue, client.base_url)
+                click.echo(f"{summary['key']:<12} [{summary['status']:<12}] {summary['summary']}")
+                click.echo(f"  Assignee: {summary['assignee'] or 'Unassigned'}  URL: {summary['url']}")
+        return
+
     result = _build_search_jql(cfg, client, max_results)
     if result is None:
         click.echo("Aborted, no search performed.")
