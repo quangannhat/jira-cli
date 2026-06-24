@@ -293,7 +293,7 @@ def build_results_template(issues: list[dict], base_url: str) -> str:
     """
     lines = [
         "# Actions: leave as None to do nothing, or type an action below and save.",
-        "# Available actions: bulk-update",
+        "# Available actions: bulk-update, view <ISSUE-KEY> (e.g. view PROJ-1; returns to this list after)",
         "Actions: None",
         "",
         "# Matching tickets. Each ticket is followed by a link you can copy.",
@@ -320,6 +320,38 @@ def parse_results_template(text: str) -> str | None:
             value = match.group(1).strip()
             return value if value and value.lower() != "none" else None
     return None
+
+
+def build_issue_detail_template(issue: dict, base_url: str, comments: list[dict] | None = None) -> str:
+    """Read-only view of a single ticket, including comments. Nothing here is parsed back;
+    closing the editor just returns to the results list."""
+    fields = issue["fields"]
+    assignee = fields.get("assignee") or {}
+    description = adf_to_text(fields.get("description"))
+
+    comments_block = "(no comments)"
+    if comments:
+        comments_block = "\n\n".join(
+            f"[{c.get('created', '')}] {c.get('author', {}).get('displayName', 'Unknown')}:\n"
+            f"{adf_to_text(c.get('body'))}"
+            for c in comments
+        )
+
+    return f"""# Viewing {issue['key']} — close this file to return to the list. Nothing here is parsed back.
+
+Key:      {issue['key']}
+Summary:  {fields['summary']}
+Status:   {fields['status']['name']}
+Type:     {fields.get('issuetype', {}).get('name', '')}
+Assignee: {assignee.get('displayName', 'Unassigned')}
+URL:      {base_url}/browse/{issue['key']}
+
+Description:
+{description}
+
+Comments:
+{comments_block}
+"""
 
 
 def build_bulk_update_template(issues: list[dict], available_statuses: list[str]) -> str:

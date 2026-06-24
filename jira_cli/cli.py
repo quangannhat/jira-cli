@@ -224,6 +224,21 @@ def _build_search_jql(cfg: dict, client: JiraClient, default_max_results: int) -
     return jql, max_results
 
 
+def _show_results_template(issues: list[dict], client: JiraClient, editor: list[str]) -> str | None:
+    """Open the results template in $EDITOR and return the Actions value the user left."""
+    fd, path = tempfile.mkstemp(suffix=".jira.md")
+    os.close(fd)
+    try:
+        with open(path, "w") as f:
+            f.write(template.build_results_template(issues, client.base_url))
+        subprocess.call(editor + [path])
+        with open(path) as f:
+            text = f.read()
+    finally:
+        os.remove(path)
+    return template.parse_results_template(text)
+
+
 @main.command()
 @click.option("--max", "-m", "max_results", default=25, help="Max number of results")
 def search(max_results):
@@ -243,23 +258,35 @@ def search(max_results):
         click.echo("No issues found.")
         return
 
-    fd, path = tempfile.mkstemp(suffix=".jira.md")
-    os.close(fd)
-    try:
-        with open(path, "w") as f:
-            f.write(template.build_results_template(issues, client.base_url))
+    editor = shlex.split(os.environ.get("EDITOR", "nvim"))
 
-        editor = shlex.split(os.environ.get("EDITOR", "nvim"))
-        subprocess.call(editor + [path])
+    while True:
+        action = _show_results_template(issues, client, editor)
+        if action is None:
+            return
 
-        with open(path) as f:
-            text = f.read()
-    finally:
-        os.remove(path)
+        if action.lower().startswith("view "):
+            issue_key = action[5:].strip()
+            if not issue_key:
+                click.echo("No issue key given for 'view'.")
+                continue
+            try:
+                issue = client.get_issue(issue_key)
+                comments = client.get_comments(issue_key)
+            except JiraApiError as e:
+                click.echo(f"Could not load {issue_key}: {e}")
+                continue
+            fd, path = tempfile.mkstemp(suffix=".jira.md")
+            os.close(fd)
+            try:
+                with open(path, "w") as f:
+                    f.write(template.build_issue_detail_template(issue, client.base_url, comments))
+                subprocess.call(editor + [path])
+            finally:
+                os.remove(path)
+            continue
 
-    action = template.parse_results_template(text)
-    if action is None:
-        return
+        break
 
     if action.lower() == "bulk-update":
         project_keys = sorted({issue["key"].split("-")[0] for issue in issues})
@@ -277,7 +304,6 @@ def search(max_results):
         try:
             with open(path, "w") as f:
                 f.write(template.build_bulk_update_template(issues, sorted(available_statuses)))
-            editor = shlex.split(os.environ.get("EDITOR", "nvim"))
             subprocess.call(editor + [path])
             with open(path) as f:
                 bulk_text = f.read()

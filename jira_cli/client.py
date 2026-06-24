@@ -163,6 +163,10 @@ class JiraClient:
         resp = self._request("GET", f"/rest/api/3/issue/{issue_key}")
         return resp.json()
 
+    def get_comments(self, issue_key: str) -> list[dict]:
+        resp = self._request("GET", f"/rest/api/3/issue/{issue_key}/comment")
+        return resp.json()["comments"]
+
     def search_issues(self, jql: str, max_results: int = 25) -> list[dict]:
         resp = self._request(
             "GET",
